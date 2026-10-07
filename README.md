@@ -1,4 +1,4 @@
-# opencode-relay-plugin (v2)
+# @nofendian17/opencode-relay-plugin (v2)
 
 Route OpenCode **v2** Zen traffic (`https://opencode.ai/zen/*`) through your
 relay endpoint(s), ported from the v1 `relay.js`
@@ -26,7 +26,7 @@ Reference: https://opencode.ai/v2/docs/plugins/ + migration guide
 
 ```sh
 # inside your project
-npm i opencode-relay-plugin
+npm i @nofendian17/opencode-relay-plugin
 # or local path
 ```
 
@@ -39,7 +39,7 @@ npm i opencode-relay-plugin
   "$schema": "https://opencode.ai/config.json",
   "plugins": [
     {
-      "package": "opencode-relay-plugin",
+      "package": "@nofendian17/opencode-relay-plugin",
       "options": {
         "url": "https://relay.example.com/relay",
         // "url": ["https://r1.example.com", "https://r2.example.com"],
