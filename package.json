@@ -1,6 +1,6 @@
 {
   "name": "@nofendian17/opencode-relay-plugin",
-  "version": "2.0.0",
+  "version": "2.0.1",
   "description": "Route OpenCode v2 Zen (opencode.ai) traffic through relay endpoint(s) with round-robin, failover, and direct fallback. Other providers are left untouched.",
   "type": "module",
   "main": "./index.ts",
