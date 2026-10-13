@@ -65,7 +65,7 @@ Local file (auto-discovered):
 | Option | Env fallback | Description |
 | --- | --- | --- |
 | `url: string \| string[]` | `RELAY_URL` (comma-separated) | Relay endpoint(s), `http(s)` only. Invalid entries are skipped with a warning log; if none remain valid the plugin disables itself. |
-| `debug: boolean` | `RELAY_DEBUG=1` | Verbose per-request logging. When on, log lines are also appended to `/tmp/opencode-relay.log` (plugin `console.log` is not forwarded to opencode logs). |
+| `debug: boolean` | `RELAY_DEBUG=1` | Verbose per-request logging. When on, log lines are also appended to `/tmp/opencode-relay.log` (plugin `console.log` is not forwarded to opencode logs). Override the path with `RELAY_DEBUG_LOG` (used by tests for isolation). |
 
 ## Relay protocol (unchanged from v1)
 
