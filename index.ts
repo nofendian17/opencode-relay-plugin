@@ -61,6 +61,54 @@ function withDuplex(init: RequestInit, bodyBuf: ArrayBuffer | undefined): Reques
   return bodyBuf ? ({ ...init, duplex: "half" } as RequestInit) : init
 }
 
+interface RelayPoolResult {
+  response?: Response
+  lastError?: unknown
+  aborted: boolean
+}
+
+/**
+ * Try each relay in the pool starting from `start`, up to `count` attempts.
+ * Shared by both failover paths (session hooks + global fetch patch).
+ */
+async function tryRelayPool(
+  relays: readonly string[],
+  start: number,
+  count: number,
+  method: string,
+  baseHeaders: Headers,
+  orig: { origin: string; path: string },
+  bodyBuf: ArrayBuffer | undefined,
+  signal: AbortSignal | undefined,
+  directFetch: typeof fetch,
+  log: Logger,
+): Promise<RelayPoolResult> {
+  let lastError: unknown
+  for (let i = 0; i < count; i++) {
+    if (signal?.aborted) return { aborted: true }
+    const relay = relays[(start + i) % relays.length]
+    const headers = new Headers(baseHeaders)
+    headers.set("x-relay-target", orig.origin)
+    headers.set("x-relay-path", orig.path)
+    log(`retry ${method} ${orig.origin} via relay`, { relay, attempt: i + 1 })
+    try {
+      const res = await directFetch(relay, withDuplex({ method, headers, body: bodyBuf, signal }, bodyBuf))
+      if (!isRelayFailureStatus(res.status)) return { response: res, aborted: false }
+      lastError = new Error(`relay responded ${res.status}`)
+      try {
+        await res.body?.cancel()
+      } catch {
+        // ignore
+      }
+    } catch (e) {
+      if (signal?.aborted) return { aborted: true }
+      lastError = e
+      log("relay network error", { relay, error: String(e) })
+    }
+  }
+  return { lastError, aborted: false }
+}
+
 // Returns true if the signal was aborted and the caller should return early.
 async function failoverToDirect(
   event: { response: Response },
@@ -75,36 +123,16 @@ async function failoverToDirect(
   log: Logger,
   emit: Logger,
 ): Promise<boolean> {
-  let lastStatus = event.response.status
   // Try the other relays in the pool (the first was already tried in http.request).
-  for (let i = 1; i < relays.length; i++) {
-    if (signal?.aborted) return true
-    const relay = relays[(start + i) % relays.length]
-    const h = new Headers(headers)
-    h.set("x-relay-target", orig.origin)
-    h.set("x-relay-path", orig.path)
-    log(`retry ${method} ${orig.origin} via next relay`, { relay, prevStatus: lastStatus })
-    try {
-      const res = await directFetch(relay, withDuplex({ method, headers: h, body: bodyBuf, signal }, bodyBuf))
-      if (!isRelayFailureStatus(res.status)) {
-        event.response = res
-        return false
-      }
-      lastStatus = res.status
-      try {
-        await res.body?.cancel()
-      } catch {
-        // ignore
-      }
-    } catch (e) {
-      if (signal?.aborted) return true
-      log("relay retry network error", { relay, error: String(e) })
-      continue
-    }
+  const result = await tryRelayPool(relays, start + 1, relays.length - 1, method, headers, orig, bodyBuf, signal, directFetch, log)
+  if (result.aborted) return true
+  if (result.response) {
+    event.response = result.response
+    return false
   }
 
   // All relays failed -> direct fallback (v1 parity).
-  emit("relay fallback to direct", { target: orig.origin, path: orig.path, status: lastStatus })
+  emit("relay fallback to direct", { target: orig.origin, path: orig.path, status: event.response.status })
   if (signal?.aborted) return true
   try {
     event.response = await directFetch(orig.origin + orig.path, withDuplex({ method, headers, body: bodyBuf, signal }, bodyBuf))
@@ -156,35 +184,15 @@ function createRelayFetch(
       }
     }
 
-    const start = pickIndex()
-    let lastError: unknown
-    for (let attempt = 0; attempt < relays.length; attempt++) {
-      const relay = relays[(start + attempt) % relays.length]
-      const headers = new Headers(originalHeaders)
-      headers.set("x-relay-target", url.origin)
-      headers.set("x-relay-path", relayPath(url))
-      if (debug) log(`${method} ${url.origin}${url.pathname}`, { relay, attempt: attempt + 1 })
-
-      try {
-        const res = await direct(relay, withDuplex({ method, headers, body: bodyBuf, signal }, bodyBuf))
-        if (!isRelayFailureStatus(res.status)) return res
-        lastError = new Error(`relay responded ${res.status}`)
-        // Consume/cancel relay error body so the socket can be reused.
-        try {
-          await res.body?.cancel()
-        } catch {
-          // ignore
-        }
-      } catch (e) {
-        if (signal.aborted) throw e
-        lastError = e
-      }
-    }
+    const orig = { origin: url.origin, path: relayPath(url) }
+    const result = await tryRelayPool(relays, pickIndex(), relays.length, method, originalHeaders, orig, bodyBuf, signal, direct, log)
+    if (result.aborted) throw new Error("The operation was aborted")
+    if (result.response) return result.response
 
     emit("relay fallback to direct", {
       target: url.origin,
       path: url.pathname,
-      error: String(lastError),
+      error: String(result.lastError),
     })
     return direct(url.href, withDuplex({ method, headers: originalHeaders, body: bodyBuf, signal }, bodyBuf))
   }
