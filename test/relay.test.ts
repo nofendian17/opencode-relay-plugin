@@ -147,6 +147,41 @@ describe("relay plugin (v2)", () => {
     }
   })
 
+  it("preserves POST body across failover retries", async () => {
+    const bodies: string[] = []
+    globalThis.fetch = (async (input: unknown, init?: RequestInit) => {
+      const req = input instanceof Request && !init ? input : new Request(input as string, init)
+      const url = req.url.replace(/\/$/, "")
+      bodies.push(await req.text())
+      if (url.startsWith("https://r")) return new Response("err", { status: 500 })
+      return new Response("direct-ok", { status: 200 })
+    }) as typeof fetch
+
+    const { ctx, hooks } = mockCtx({ url: ["https://r1.x", "https://r2.x"] })
+    const done = await (plugin as unknown as { setup: (c: unknown) => unknown }).setup(ctx)
+    try {
+      const ev = {
+        sessionID: "s1",
+        request: new Request("https://opencode.ai/zen/v1/messages", {
+          method: "POST",
+          body: '{"prompt":"hello"}',
+        }),
+      }
+      await (hooks["http.request"] as (e: unknown) => Promise<void>)(ev)
+      const resEv = {
+        sessionID: "s1",
+        request: ev.request,
+        response: new Response("e", { status: 500 }),
+      }
+      await (hooks["http.response"] as (e: unknown) => Promise<void>)(resEv)
+      assert.equal((resEv.response as Response).status, 200)
+      // r2 retry + direct fallback both get the body (r1 is simulated, not fetched)
+      assert.deepEqual(bodies, ['{"prompt":"hello"}', '{"prompt":"hello"}'])
+    } finally {
+      await cleanupOf(done)
+    }
+  })
+
   it("leaves non-Zen providers untouched", async () => {
     const { ctx, hooks } = mockCtx({ url: ["https://r1.x"] })
     const done = await (plugin as unknown as { setup: (c: unknown) => unknown }).setup(ctx)
@@ -305,8 +340,29 @@ describe("relay plugin (v2)", () => {
     }
   })
 
-  it("writes debug log to /tmp when debug is true", async () => {
-    const file = "/tmp/opencode-relay.log"
+  it("global fetch patch fails over relays then falls back to direct", async () => {
+    const calls: string[] = []
+    globalThis.fetch = (async (input: unknown) => {
+      const url = typeof input === "string" ? input : input instanceof URL ? input.href : (input as Request).url
+      calls.push(url.replace(/\/$/, ""))
+      if (url.startsWith("https://r")) return new Response("err", { status: 500 })
+      return new Response("direct-ok", { status: 200 })
+    }) as typeof fetch
+
+    const { ctx } = mockCtx({ url: ["https://r1.x", "https://r2.x"] })
+    const done = await (plugin as unknown as { setup: (c: unknown) => unknown }).setup(ctx)
+    try {
+      const res = await globalThis.fetch("https://opencode.ai/zen/v1/messages")
+      assert.equal(res.status, 200)
+      assert.equal(await res.text(), "direct-ok")
+      assert.deepEqual(calls, ["https://r1.x", "https://r2.x", "https://opencode.ai/zen/v1/messages"])
+    } finally {
+      await cleanupOf(done)
+    }
+  })
+
+  it("writes debug log to temp dir when debug is true", async () => {
+    const file = join(tmpdir(), "opencode-relay.log")
     await rm(file, { force: true })
     try {
       const { ctx } = mockCtx({ url: ["https://r1.x"], debug: true })
