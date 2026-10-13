@@ -182,6 +182,27 @@ describe("relay plugin (v2)", () => {
     }
   })
 
+  it("relays opencode.ai inference traffic (not only /zen/*)", async () => {
+    const { ctx, hooks } = mockCtx({ url: ["https://r1.x"] })
+    const done = await (plugin as unknown as { setup: (c: unknown) => unknown }).setup(ctx)
+    try {
+      const ev = {
+        sessionID: "s1",
+        request: new Request("https://opencode.ai/inference/v1/chat/completions", {
+          method: "POST",
+          body: "{}",
+        }),
+      }
+      await (hooks["http.request"] as (e: unknown) => Promise<void>)(ev)
+      const req = ev.request as Request
+      assert.ok(req.url.startsWith("https://r1.x"), `inference goes via relay, got ${req.url}`)
+      assert.equal(req.headers.get("x-relay-target"), "https://opencode.ai")
+      assert.equal(req.headers.get("x-relay-path"), "/inference/v1/chat/completions")
+    } finally {
+      await cleanupOf(done)
+    }
+  })
+
   it("leaves non-Zen providers untouched", async () => {
     const { ctx, hooks } = mockCtx({ url: ["https://r1.x"] })
     const done = await (plugin as unknown as { setup: (c: unknown) => unknown }).setup(ctx)
@@ -312,6 +333,26 @@ describe("relay plugin (v2)", () => {
     const done = await (plugin as unknown as { setup: (c: unknown) => unknown }).setup(ctx)
     try {
       const res = await globalThis.fetch("https://opencode.ai/zen/v1/messages")
+      assert.equal(res.status, 200)
+      assert.ok(calls.some((u) => u.startsWith("https://r1.x")), `relay got the call, got ${JSON.stringify(calls)}`)
+      assert.ok(!calls.some((u) => u.startsWith("https://opencode.ai")), "direct URL not called")
+    } finally {
+      await cleanupOf(done)
+    }
+  })
+
+  it("patches global fetch for opencode.ai inference traffic", async () => {
+    const calls: string[] = []
+    globalThis.fetch = (async (input: unknown) => {
+      const url = typeof input === "string" ? input : (input as Request).url
+      calls.push(url)
+      return new Response("ok", { status: 200 })
+    }) as typeof fetch
+
+    const { ctx } = mockCtx({ url: ["https://r1.x"] })
+    const done = await (plugin as unknown as { setup: (c: unknown) => unknown }).setup(ctx)
+    try {
+      const res = await globalThis.fetch("https://opencode.ai/inference/v1/chat/completions", { method: "POST" })
       assert.equal(res.status, 200)
       assert.ok(calls.some((u) => u.startsWith("https://r1.x")), `relay got the call, got ${JSON.stringify(calls)}`)
       assert.ok(!calls.some((u) => u.startsWith("https://opencode.ai")), "direct URL not called")

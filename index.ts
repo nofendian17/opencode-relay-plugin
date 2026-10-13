@@ -10,7 +10,7 @@ interface RelayOptions {
 
 const DEBUG_LOG = join(tmpdir(), "opencode-relay.log")
 
-const ZEN_PREFIX = "https://opencode.ai/zen/"
+const OPENCODE_ORIGIN = "https://opencode.ai"
 
 type Logger = (message: string, extra?: Record<string, unknown>) => void
 
@@ -149,7 +149,7 @@ type RelayFetch = (input: RequestInfo | URL, init?: RequestInit) => Promise<Resp
  * `x-relay-target` / `x-relay-path` (original method preserved),
  * round-robin across the pool, fail over on 429/5xx + network errors,
  * fall back to direct.
- * Used for out-of-session traffic (global fetch patch for Zen).
+ * Used for out-of-session traffic (global fetch patch for opencode.ai).
  */
 function createRelayFetch(
   relays: readonly string[],
@@ -280,15 +280,15 @@ export default Plugin.define({
     const relayOrigins = buildRelayOrigins(relays)
     const relayFetch = createRelayFetch(relays, pickIndex, directFetch, debug, log, emit)
 
-    // --- Global fetch patch for out-of-session Zen traffic (v1 parity) ---
+    // --- Global fetch patch for out-of-session opencode.ai traffic (v1 parity) ---
     // Session model traffic is covered by hooks below; this covers anything
-    // else that calls fetch("https://opencode.ai/zen/...") directly.
+    // else that calls fetch("https://opencode.ai/...") directly.
     if (!g[PATCH_MARKER]) {
       g[PATCH_MARKER] = originalForPatch
       globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
         const urlStr =
           typeof input === "string" ? input : input instanceof URL ? input.href : input.url
-        if (typeof urlStr === "string" && urlStr.startsWith(ZEN_PREFIX)) {
+        if (typeof urlStr === "string" && urlStr.startsWith(OPENCODE_ORIGIN)) {
           try {
             if (!relayOrigins.has(new URL(urlStr).origin)) return relayFetch(input, init)
           } catch {
@@ -347,9 +347,10 @@ export default Plugin.define({
       // Avoid relaying the relay itself (loop).
       if (relayOrigins.has(url.origin)) return
 
-      // Scope: only the Zen endpoint goes through the relay. Other
+      // Scope: only opencode.ai endpoints go through the relay (zen,
+      // inference, and any future path on the same origin). Other
       // providers already point at direct gateways and are left untouched.
-      if (!url.href.startsWith(ZEN_PREFIX)) return
+      if (url.origin !== OPENCODE_ORIGIN) return
 
       // Buffer body (streams are one-shot).
       let bodyBuf: ArrayBuffer | undefined
