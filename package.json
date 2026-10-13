@@ -26,7 +26,7 @@
     "@opencode/plugin": "^2"
   },
   "devDependencies": {
-    "@opencode/plugin": "^2.0.24",
+    "@opencode/plugin": "^2.0.28",
     "@types/node": "^26.6.4",
     "typescript": "^5.9.3"
   }
