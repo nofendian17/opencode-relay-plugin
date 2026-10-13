@@ -1,7 +1,25 @@
 import { Plugin } from "@opencode/plugin"
-import { appendFile } from "node:fs/promises"
+import { appendFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
+
+// Bun runtime: node:fs/promises appendFile fails silently. Use sync API.
+function safeAppendFile(path: string, data: string): void {
+  try {
+    appendFileSync(path, data)
+  } catch {
+    // Fallback: try Bun.write if available
+    try {
+      // @ts-ignore - Bun global may not exist in Node
+      if (typeof Bun !== "undefined") {
+        // @ts-ignore
+        Bun.write(path, data, { mode: "append" })
+      }
+    } catch {
+      // All failed - ignore
+    }
+  }
+}
 
 interface RelayOptions {
   url?: string | string[]
@@ -198,15 +216,28 @@ function createRelayFetch(
   }
 }
 
+function parseDebug(value: unknown): boolean | undefined {
+  if (value === undefined) return undefined
+  if (typeof value === "boolean") return value
+  if (typeof value === "number") return value !== 0
+  if (typeof value === "string") {
+    const v = value.trim().toLowerCase()
+    if (["1", "true", "yes", "on", "debug"].includes(v)) return true
+    if (["0", "false", "no", "off", ""].includes(v)) return false
+    return true
+  }
+  return Boolean(value)
+}
+
 function parseOptions(options: Record<string, unknown> | undefined): {
   relays: string[]
   debug: boolean
 } {
   const url = options?.["url"] as string | string[] | undefined
-  const debugOpt = options?.["debug"] as boolean | undefined
+  const envDebug = process.env.RELAY_DEBUG
   return {
     relays: normalizeRelays(url),
-    debug: debugOpt ?? process.env.RELAY_DEBUG === "1",
+    debug: parseDebug(options?.["debug"]) ?? parseDebug(envDebug) ?? false,
   }
 }
 
@@ -219,29 +250,26 @@ export default Plugin.define({
     const debug = parsed.debug
     const prefix = "[relay]"
     // console output from v2 plugins is not forwarded to opencode logs,
-    // so when debug is on, mirror everything to a file as well.
+    // so mirror important events to a file unconditionally and verbose
+    // per-request lines only when debug is on.
+    // NOTE: this is the plugin option `plugins[].options.debug`
+    // (or RELAY_DEBUG=1), NOT the top-level opencode `debug` flag.
     // RELAY_DEBUG_LOG overrides the path (tests use an isolated file so a
     // live opencode process appending to the default never interferes).
-    // Async fire-and-forget: logging never breaks requests.
-    const debugLogFile = process.env.RELAY_DEBUG_LOG ?? DEBUG_LOG
-    let warnedLogFile = false
-    const fileLog: Logger | undefined = debug
-      ? (message, extra) => {
-          const line =
-            `${new Date().toISOString()} ${prefix} ${message}` +
-            (extra ? ` ${JSON.stringify(extra)}` : "") +
-            "\n"
-          appendFile(debugLogFile, line).catch((e: unknown) => {
-            if (!warnedLogFile) {
-              warnedLogFile = true
-              console.log(prefix, "debug log write failed", debugLogFile, String(e))
-            }
-          })
-        }
-      : undefined
+    // Default path is os.tmpdir() — on macOS that is NOT /tmp but
+    // $TMPDIR (e.g. /var/folders/.../T/opencode-relay.log).
+    // Logging never breaks requests.
+    const logFile = process.env.RELAY_DEBUG_LOG ?? DEBUG_LOG
+    const fileLog: Logger = (message, extra) => {
+      const line =
+        `${new Date().toISOString()} ${prefix} ${message}` +
+        (extra ? ` ${JSON.stringify(extra)}` : "") +
+        "\n"
+      safeAppendFile(logFile, line)
+    }
     const emit: Logger = (message, extra) => {
       console.log(prefix, message, extra ? JSON.stringify(extra) : "")
-      fileLog?.(message, extra)
+      fileLog(message, extra)
     }
     const log: Logger = (message, extra) => {
       if (debug) emit(message, extra)
@@ -262,14 +290,14 @@ export default Plugin.define({
       }
     }
 
-    emit("init", { debug, relayCount: relays.length })
+    emit("init", { debug, relayCount: relays.length, logFile })
 
     if (relays.length === 0) {
       emit("disabled: no relays configured (set plugin option `url` or RELAY_URL)", {})
       return
     }
 
-    log("relay pool loaded", { relays })
+    log("relay pool loaded", { relays, logFile })
 
     const rawFetch = globalThis.fetch
     const g = globalThis as Record<string, unknown>

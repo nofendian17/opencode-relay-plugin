@@ -445,17 +445,15 @@ describe("relay plugin (v2)", () => {
     }
   })
 
-  it("writes no file when debug is false", async () => {
+  it("always writes init line, verbose only when debug is true", async () => {
     const file = TEST_LOG
     await rm(file, { force: true })
     const { ctx } = mockCtx({ url: ["https://r1.x"] })
     const done = await (plugin as unknown as { setup: (c: unknown) => unknown }).setup(ctx)
     try {
-      await new Promise((r) => setTimeout(r, 100))
-      const exists = await readFile(file, "utf8")
-        .then(() => true)
-        .catch(() => false)
-      assert.equal(exists, false)
+      const content = await readFile(file, "utf8")
+      assert.ok(content.includes("[relay] init"), "init line written even when debug is false")
+      assert.ok(!content.includes("relay pool loaded"), "verbose lines suppressed when debug is false")
     } finally {
       await cleanupOf(done)
     }
