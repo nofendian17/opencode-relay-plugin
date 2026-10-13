@@ -1,12 +1,14 @@
 import { Plugin } from "@opencode/plugin"
 import { appendFile } from "node:fs/promises"
+import { tmpdir } from "node:os"
+import { join } from "node:path"
 
 interface RelayOptions {
   url?: string | string[]
   debug?: boolean
 }
 
-const DEBUG_LOG = "/tmp/opencode-relay.log"
+const DEBUG_LOG = join(tmpdir(), "opencode-relay.log")
 
 const ZEN_PREFIX = "https://opencode.ai/zen/"
 

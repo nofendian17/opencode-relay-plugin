@@ -1,6 +1,8 @@
 import { describe, it, beforeEach, afterEach } from "node:test"
 import assert from "node:assert"
 import { readFile, rm } from "node:fs/promises"
+import { tmpdir } from "node:os"
+import { join } from "node:path"
 import plugin from "../index.ts"
 
 const MARKER = "__opencodeRelayZenPatched"
@@ -330,7 +332,7 @@ describe("relay plugin (v2)", () => {
   })
 
   it("writes no file when debug is false", async () => {
-    const file = "/tmp/opencode-relay.log"
+    const file = join(tmpdir(), "opencode-relay.log")
     await rm(file, { force: true })
     const { ctx } = mockCtx({ url: ["https://r1.x"] })
     const done = await (plugin as unknown as { setup: (c: unknown) => unknown }).setup(ctx)
