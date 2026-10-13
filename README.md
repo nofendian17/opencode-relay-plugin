@@ -65,7 +65,7 @@ Local file (auto-discovered):
 | Option | Env fallback | Description |
 | --- | --- | --- |
 | `url: string \| string[]` | `RELAY_URL` (comma-separated) | Relay endpoint(s), `http(s)` only. Invalid entries are skipped with a warning log; if none remain valid the plugin disables itself. |
-| `debug: boolean` | `RELAY_DEBUG=1` | Verbose per-request logging. When on, log lines are also appended to `/tmp/opencode-relay.log` (plugin `console.log` is not forwarded to opencode logs). Override the path with `RELAY_DEBUG_LOG` (used by tests for isolation). |
+| `debug: boolean` | `RELAY_DEBUG=1` | Verbose per-request logging. **Ini opsi plugin** (`plugins[].options.debug`), **bukan** top-level `debug` di `opencode.jsonc` — top-level `debug` tidak mengaktifkan log plugin ini. Baris penting (`init`, `disabled`, `fallback`) selalu ditulis ke file log; baris verbose per-request hanya saat `debug` on. Override path dengan `RELAY_DEBUG_LOG` (dipakai tests untuk isolasi). |
 
 ## Relay protocol (unchanged from v1)
 
@@ -89,10 +89,11 @@ access logs as secret-bearing.
 
 ## Verify
 
-1. Set `debug: true` + `url` to a local echo server, run a prompt, confirm
+1. Set plugin option `debug: true` + `url` ke local echo server, run prompt, confirm
    `x-relay-target` / `x-relay-path` headers arrive.
 2. Stop the relay → request still succeeds via direct fallback (check
-   `[relay] relay fallback to direct` in `/tmp/opencode-relay.log`).
+   `[relay] relay fallback to direct` in the log file — path is printed in the
+   `[relay] init` line as `logFile`).
 3. Unset `url`/`RELAY_URL` → `[relay] disabled` log, traffic goes direct.
 4. Confirm scope: a request to `https://opencode.ai/inference/...` must show
    `via relay` in the log. If the log only shows
@@ -100,8 +101,11 @@ access logs as secret-bearing.
    `https://opencode.ai/...` URL and zero `via relay` lines, the request never
    entered the pool — check the origin match in `index.ts`.
 
-Note: the debug file is the shared `/tmp/opencode-relay.log`; concurrent
-opencode processes append to the same file.
+Note: the default file is `os.tmpdir()/opencode-relay.log` — on macOS that is
+`$TMPDIR/opencode-relay.log` (e.g. `/var/folders/.../T/`), NOT `/tmp/`.
+Check the `logFile` field in the `[relay] init` line for the exact path.
+Concurrent opencode processes append to the same file. Plugin `console.log`
+is not forwarded to opencode logs, so always check the file, not the TUI.
 
 ## V1 vs V2 notes
 
