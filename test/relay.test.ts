@@ -7,16 +7,31 @@ import plugin from "../index.ts"
 
 const MARKER = "__opencodeRelayZenPatched"
 
+// Isolated debug-log path: the default /tmp/opencode-relay.log is shared
+// with any live opencode process, which would break file assertions.
+const TEST_LOG = join(tmpdir(), `opencode-relay-test-${process.pid}.log`)
+process.env.RELAY_DEBUG_LOG = TEST_LOG
+
 let realFetch: typeof fetch
+let savedEnv: { RELAY_URL?: string; RELAY_DEBUG?: string }
 
 beforeEach(() => {
   realFetch = globalThis.fetch
+  // Hermetic env: the developer shell may export RELAY_URL / RELAY_DEBUG,
+  // which parseOptions uses as fallback and would leak into assertions.
+  savedEnv = { RELAY_URL: process.env.RELAY_URL, RELAY_DEBUG: process.env.RELAY_DEBUG }
+  delete process.env.RELAY_URL
+  delete process.env.RELAY_DEBUG
 })
 
-afterEach(() => {
+afterEach(async () => {
   globalThis.fetch = realFetch
   delete (globalThis as Record<string, unknown>)[MARKER]
-  delete process.env.RELAY_URL
+  if (savedEnv.RELAY_URL !== undefined) process.env.RELAY_URL = savedEnv.RELAY_URL
+  else delete process.env.RELAY_URL
+  if (savedEnv.RELAY_DEBUG !== undefined) process.env.RELAY_DEBUG = savedEnv.RELAY_DEBUG
+  else delete process.env.RELAY_DEBUG
+  await rm(TEST_LOG, { force: true })
 })
 
 function mockCtx(options: Record<string, unknown>) {
@@ -403,7 +418,7 @@ describe("relay plugin (v2)", () => {
   })
 
   it("writes debug log to temp dir when debug is true", async () => {
-    const file = join(tmpdir(), "opencode-relay.log")
+    const file = TEST_LOG
     await rm(file, { force: true })
     try {
       const { ctx } = mockCtx({ url: ["https://r1.x"], debug: true })
@@ -413,13 +428,15 @@ describe("relay plugin (v2)", () => {
         for (let i = 0; i < 50; i++) {
           try {
             content = await readFile(file, "utf8")
-            if (content.includes("[relay] init")) break
+            // Wait for BOTH setup lines: appends are fire-and-forget, and a
+            // straggler landing after this test would flake the next one.
+            if (content.includes("[relay] init") && content.includes("relay pool loaded")) break
           } catch {
             // not flushed yet
           }
           await new Promise((r) => setTimeout(r, 20))
         }
-        assert.ok(content.includes("[relay] init"), "init line written to /tmp")
+        assert.ok(content.includes("[relay] init"), "init line written to log file")
       } finally {
         await cleanupOf(done)
       }
@@ -429,7 +446,7 @@ describe("relay plugin (v2)", () => {
   })
 
   it("writes no file when debug is false", async () => {
-    const file = join(tmpdir(), "opencode-relay.log")
+    const file = TEST_LOG
     await rm(file, { force: true })
     const { ctx } = mockCtx({ url: ["https://r1.x"] })
     const done = await (plugin as unknown as { setup: (c: unknown) => unknown }).setup(ctx)

@@ -219,8 +219,11 @@ export default Plugin.define({
     const debug = parsed.debug
     const prefix = "[relay]"
     // console output from v2 plugins is not forwarded to opencode logs,
-    // so when debug is on, mirror everything to a file in /tmp as well.
+    // so when debug is on, mirror everything to a file as well.
+    // RELAY_DEBUG_LOG overrides the path (tests use an isolated file so a
+    // live opencode process appending to the default never interferes).
     // Async fire-and-forget: logging never breaks requests.
+    const debugLogFile = process.env.RELAY_DEBUG_LOG ?? DEBUG_LOG
     let warnedLogFile = false
     const fileLog: Logger | undefined = debug
       ? (message, extra) => {
@@ -228,10 +231,10 @@ export default Plugin.define({
             `${new Date().toISOString()} ${prefix} ${message}` +
             (extra ? ` ${JSON.stringify(extra)}` : "") +
             "\n"
-          appendFile(DEBUG_LOG, line).catch((e: unknown) => {
+          appendFile(debugLogFile, line).catch((e: unknown) => {
             if (!warnedLogFile) {
               warnedLogFile = true
-              console.log(prefix, "debug log write failed", DEBUG_LOG, String(e))
+              console.log(prefix, "debug log write failed", debugLogFile, String(e))
             }
           })
         }
