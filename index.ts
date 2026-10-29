@@ -50,15 +50,6 @@ function normalizeRelays(raw: string | string[] | undefined): string[] {
   return [...seen]
 }
 
-function createRoundRobin(count: number): () => number {
-  let idx = 0
-  return () => {
-    const cur = idx
-    idx = (idx + 1) % count
-    return cur
-  }
-}
-
 function buildRelayOrigins(relays: readonly string[]): ReadonlySet<string> {
   const origins = new Set<string>()
   for (const relay of relays) {
@@ -242,6 +233,7 @@ function parseOptions(options: Record<string, unknown> | undefined): {
 }
 
 const PATCH_MARKER = "__opencodeRelayZenPatched"
+const ROUND_ROBIN_KEY = "__opencodeRelayRoundRobinIdx"
 
 export default Plugin.define({
   id: "relay",
@@ -307,7 +299,15 @@ export default Plugin.define({
     // Bind the pristine fetch, not a possibly already-patched one from a
     // prior setup without cleanup (avoids wrapping the patch recursively).
     const directFetch = originalForPatch.bind(globalThis)
-    const pickIndex = createRoundRobin(relays.length)
+    // Round-robin index is global (module/process-wide) so that setups created
+    // per session/conversation still rotate through the pool instead of every
+    // one starting at relay 0. Stored next to the patch marker.
+    if (g[ROUND_ROBIN_KEY] === undefined) g[ROUND_ROBIN_KEY] = 0
+    const pickIndex = () => {
+      const cur = (g[ROUND_ROBIN_KEY] as number) ?? 0
+      g[ROUND_ROBIN_KEY] = cur + 1
+      return cur % relays.length
+    }
     const relayOrigins = buildRelayOrigins(relays)
     const relayFetch = createRelayFetch(relays, pickIndex, directFetch, debug, log, emit)
 
@@ -316,6 +316,7 @@ export default Plugin.define({
     // else that calls fetch("https://opencode.ai/...") directly.
     if (!g[PATCH_MARKER]) {
       g[PATCH_MARKER] = originalForPatch
+      g[ROUND_ROBIN_KEY] = 0
       globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
         const urlStr =
           typeof input === "string" ? input : input instanceof URL ? input.href : input.url
@@ -515,6 +516,7 @@ export default Plugin.define({
         // ignore
       }
       delete g[PATCH_MARKER]
+      delete g[ROUND_ROBIN_KEY]
     }
   },
 })

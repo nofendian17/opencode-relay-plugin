@@ -16,7 +16,7 @@ gateways and are left untouched (no rewrite, no forced retries).
 V1 patched `provider.options.fetch` + `globalThis.fetch`. V2 providers no longer expose `fetch`,
 so this plugin uses the documented v2 interception points:
 
-- `ctx.session.hook("http.request")` — rewrite provider HTTP → `POST <relay>` with
+- `ctx.session.hook("http.request")` — rewrite provider HTTP → `<relay>` (original method/body/headers preserved) with
   `x-relay-target: <origin>` + `x-relay-path: <path+query>` (round-robin)
 - `ctx.session.hook("http.response")` — on relay `429 / 5xx`, try remaining relays, then direct
 - `ctx.session.hook("retry")` — relay network errors never reach `http.response`, so force a
