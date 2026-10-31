@@ -260,6 +260,68 @@ describe("relay plugin (v2)", () => {
     }
   })
 
+  it("skips any non-200 relay response (session hook)", async () => {
+    for (const status of [201, 302, 400, 403, 404, 429, 500]) {
+      const calls: string[] = []
+      globalThis.fetch = (async (input: unknown) => {
+        const url =
+          typeof input === "string" ? input : input instanceof URL ? input.href : (input as Request).url
+        calls.push(url.replace(/\/$/, ""))
+        if (url.startsWith("https://r")) return new Response("not-200", { status })
+        return new Response("direct-ok", { status: 200 })
+      }) as typeof fetch
+
+      const { ctx, hooks } = mockCtx({ url: ["https://r1.x", "https://r2.x"] })
+      const done = await (plugin as unknown as { setup: (c: unknown) => unknown }).setup(ctx)
+      try {
+        const ev = { sessionID: "s1", request: new Request("https://opencode.ai/zen/v1") }
+        await (hooks["http.request"] as (e: unknown) => Promise<void>)(ev)
+        const resEv = {
+          sessionID: "s1",
+          request: ev.request,
+          response: new Response("x", { status }),
+        }
+        await (hooks["http.response"] as (e: unknown) => Promise<void>)(resEv)
+        assert.deepEqual(
+          calls,
+          ["https://r2.x", "https://opencode.ai/zen/v1"],
+          `status ${status} must skip to the next relay then direct`,
+        )
+        assert.equal((resEv.response as Response).status, 200, `status ${status} falls back to direct`)
+      } finally {
+        await cleanupOf(done)
+      }
+    }
+  })
+
+  it("skips any non-200 relay response (global fetch patch)", async () => {
+    for (const status of [201, 302, 400, 429, 500]) {
+      const calls: string[] = []
+      globalThis.fetch = (async (input: unknown) => {
+        const url =
+          typeof input === "string" ? input : input instanceof URL ? input.href : (input as Request).url
+        calls.push(url.replace(/\/$/, ""))
+        if (url.startsWith("https://r")) return new Response("not-200", { status })
+        return new Response("direct-ok", { status: 200 })
+      }) as typeof fetch
+
+      const { ctx } = mockCtx({ url: ["https://r1.x", "https://r2.x"] })
+      const done = await (plugin as unknown as { setup: (c: unknown) => unknown }).setup(ctx)
+      try {
+        const res = await globalThis.fetch("https://opencode.ai/zen/v1/messages")
+        assert.equal(res.status, 200, `status ${status} falls back to direct`)
+        assert.equal(await res.text(), "direct-ok")
+        assert.deepEqual(
+          calls,
+          ["https://r1.x", "https://r2.x", "https://opencode.ai/zen/v1/messages"],
+          `status ${status} must skip every relay then go direct`,
+        )
+      } finally {
+        await cleanupOf(done)
+      }
+    }
+  })
+
   it("forces retry on retryable relay failures but not on 400", async () => {
     const { ctx, hooks } = mockCtx({ url: ["https://r1.x", "https://r2.x"] })
     const done = await (plugin as unknown as { setup: (c: unknown) => unknown }).setup(ctx)

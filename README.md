@@ -18,7 +18,7 @@ so this plugin uses the documented v2 interception points:
 
 - `ctx.session.hook("http.request")` — rewrite provider HTTP → `<relay>` (original method/body/headers preserved) with
   `x-relay-target: <origin>` + `x-relay-path: <path+query>` (round-robin)
-- `ctx.session.hook("http.response")` — on relay `429 / 5xx`, try remaining relays, then direct
+- `ctx.session.hook("http.response")` — on any relay status other than `200`, try remaining relays, then direct
 - `ctx.session.hook("retry")` — relay network errors never reach `http.response`, so force a
   retry (next attempt picks the next relay); after the pool is exhausted the next attempt goes direct
 - `ctx.session.hook("experimental.ws.handshake")` — no-op (relay is HTTP-only, kept direct)
@@ -73,7 +73,7 @@ Local file (auto-discovered):
   - `x-relay-target: https://opencode.ai` (origin)
   - `x-relay-path: /inference/v1/chat/completions` (path + query)
 - Relay returns the provider response verbatim (status/body/headers).
-- `429` or `>= 500` → try next relay → fall back to direct.
+- Any status other than `200` → try next relay → fall back to direct.
 - Network error → try next relay → fall back to direct.
 
 Retry accounting: attempts `1..N` (pool size) each try the next relay in

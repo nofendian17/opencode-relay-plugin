@@ -62,8 +62,11 @@ function buildRelayOrigins(relays: readonly string[]): ReadonlySet<string> {
   return origins
 }
 
+// A relay is only considered successful when it mirrors a plain 200.
+// Anything else (2xx variants, 3xx, 4xx incl. 429, 5xx) means the relay did
+// not serve the upstream response, so skip to the next relay / direct.
 function isRelayFailureStatus(status: number): boolean {
-  return status === 429 || status >= 500
+  return status !== 200
 }
 
 function withDuplex(init: RequestInit, bodyBuf: ArrayBuffer | undefined): RequestInit {
@@ -156,7 +159,7 @@ type RelayFetch = (input: RequestInfo | URL, init?: RequestInit) => Promise<Resp
 /**
  * Direct port of the v1 relay fetch: forward to the relay endpoint with
  * `x-relay-target` / `x-relay-path` (original method preserved),
- * round-robin across the pool, fail over on 429/5xx + network errors,
+ * round-robin across the pool, fail over on any non-200 status + network errors,
  * fall back to direct.
  * Used for out-of-session traffic (global fetch patch for opencode.ai).
  */
@@ -406,7 +409,7 @@ export default Plugin.define({
       }),
     )
 
-    // --- Failover: if the relay answered 429/5xx, try remaining relays + direct ---
+    // --- Failover: if the relay answered anything but 200, try remaining relays + direct ---
     // Mirrors the v1 for-loop, but executed here because v2 hooks edit the
     // Request/Response instead of wrapping fetch.
     disposables.push(
